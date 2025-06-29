@@ -1,17 +1,22 @@
 all: miniboot.rom miniboot.burn loadsd
 
-miniboot.obj: miniboot.s
-	as11 miniboot.s -b
+miniboot.bin: miniboot.s
+	m6811-elf-as -o miniboot.obj miniboot.s
+	# relocate sections and dump binary
+	m6811-elf-ld miniboot.obj -T miniboot.ld -o miniboot.elf
+	m6811-elf-objcopy -O binary --gap-fill 0 miniboot.elf miniboot.bin
 
-loadsd.obj: loadsd.s
-	as11 loadsd.s -b
-
-miniboot.rom: miniboot.obj
-	dd if=miniboot.obj bs=16384 skip=3 >miniboot.tmp
+miniboot.rom: miniboot.bin
+	dd if=miniboot.bin bs=16384 skip=3 >miniboot.tmp
 	cat miniboot.tmp miniboot.tmp >miniboot.rom
 
-loadsd: loadsd.obj
-	dd if=loadsd.obj bs=384 count=1 >loadsd
+
+loadsd.bin: loadsd.s
+	m6811-elf-as -o loadsd.obj loadsd.s
+	m6811-elf-objcopy --dump-section .text=loadsd.bin loadsd.obj
+
+loadsd: loadsd.bin
+	dd if=loadsd.bin bs=384 count=1 >loadsd
 
 mkmini11: mkmini11.c
 
@@ -20,4 +25,4 @@ miniboot.burn: mkmini11 miniboot.rom
 
 clean:
 	rm -f miniboot.rom miniboot.burn miniboot.tmp
-	rm -f *~ *.obj mkmini11 loadsd
+	rm -f *~ *.obj *.elf *.bin mkmini11 loadsd

@@ -1,138 +1,143 @@
 ;
-;	The SD boot code hands us
-;	A = card type
-;	X = I/O base ($F000)
-;	Y = our base
-;	S = internal RAM somewere at F0FF or so
-;	P = interrupts off
+;	the sd boot code hands us
+;	a = card type
+;	x = i/o base (0xf000)
+;	y = our base
+;	s = internal ram somewere at f0ff or so
+;	p = interrupts off
 ;
-;	IO at F000, IRAM at F000 (with some overlap)
+;	io at f000, iram at f000 (with some overlap)
 ;
 
-	ORG $0000
+	.text
 
-CTMMC	EQU	1
-CTSD2	EQU	2
-CTSDBLK	EQU	3
-CTSD1	EQU	4
+.set ctmmc, 1
+.set ctsd2, 2
+.set ctsdblk, 3
+.set ctsd1, 4
 
-SPCR	EQU	$28
-SPSR	EQU	$29
-SPDR	EQU	$2A
-PDDR	EQU	$08
-DDRD	EQU	$09
+.set spcr, 0x28
+.set spsr, 0x29
+.set spdr, 0x2a
+.set pddr, 0x08
+.set ddrd, 0x09
 
-	FDB	$6811
-START:
-	BRA GO
+	.word	0x6811
+start:
+	bra gostart
 
-LBAINC:	FDB	$200
-CARDTYPE:
-	FCB	$00
-CMD17:
-	FCB $51,0,0,0,0,$01
+lbainc:	.word	0x200
+cardtype:
+	.byte	0x00
+cmd17:
+	.byte 0x51
+	.byte 0
+	.byte 0
+	.byte 0
+	.byte 0
+	.byte 0x01
 
-GO:
-	; Block or byte LBA - set LBAINC accordingly
-	STAA CARDTYPE
-	CMPA #CTSDBLK
-	BNE BYTEMODE
-	LDD #1
-	STD LBAINC
-BYTEMODE:
-	LDAA #$50		; SPI on master, faster
-	STAA SPCR,X
+gostart:
+	; block or byte lba - set lbainc accordingly
+	staa cardtype
+	cmpa #ctsdblk
+	bne bytemode
+	ldd #1
+	std lbainc
+bytemode:
+	ldaa #0x50		; spi on master, faster
+	staa spcr,x
 
-	LDAA #$23
-	STAA $FE7B		; RAM 3 in place of ROM
+	ldaa #0x23
+	staa 0xfe7b		; ram 3 in place of rom
 
-	LDY #$0200
-	LDAA #$77		; $EE00 bytes ($0200-$EFFF)
+	ldy #0x0200
+	ldaa #0x77		; 0xee00 bytes (0x0200-0xefff)
 
-LOADLOOP:
-	PSHA			; Save count
+loadloop:
+	psha			; save count
 
-	PSHY			; Save pointer whist we do the command
-	LDY #CMD17
-	; Move on an LBA block
-	LDD 3,Y			; Update the offset or LBA number
-	ADDD LBAINC
-	STD 3,Y
-	JSR SENDCMD		; Send a read command
-	BNE SDFAIL
-WAITDATA:
-	BSR SENDFF		; Wait for the FE marker
-	CMPB #$FE
-	BNE WAITDATA
-	PULY			; Recover data pointer
-	CLRA			; Copy count (512 bytes)
-DATALOOP:
-	BSR SENDFF
-	STAB ,Y
-	BSR SENDFF
-	STAB 1,Y
-	INY
-	INY
-	DECA
-	BNE DATALOOP
-	BSR CSRAISE		; End command
-	LDAA #'.'
-	BSR OUTCH
-	PULA			; Recover counter
-	DECA
-	BNE LOADLOOP		; Done ?
-	LDAA #$0D
-	BSR OUTCH
-	LDAA #$0A
-	BSR OUTCH
-	JMP $0200		; And run
+	pshy			; save pointer whist we do the command
+	ldy #cmd17
+	; move on an lba block
+	ldd 3,y			; update the offset or lba number
+	addd lbainc
+	std 3,y
+	jsr sendcmd		; send a read command
+	bne sdfail
+waitdata:
+	bsr sendff		; wait for the fe marker
+	cmpb #0xfe
+	bne waitdata
+	puly			; recover data pointer
+	clra			; copy count (512 bytes)
+dataloop:
+	bsr sendff
+	stab ,y
+	bsr sendff
+	stab 1,y
+	iny
+	iny
+	deca
+	bne dataloop
+	bsr csraise		; end command
+	ldaa #'.'
+	bsr outch
+	pula			; recover counter
+	deca
+	bne loadloop		; done ?
+	ldaa #0x0d
+	bsr outch
+	ldaa #0x0a
+	bsr outch
+	jmp 0x0200		; and run
 
-SDFAIL: LDAA #'E'
-FAULT:	BSR OUTCH
-STOPB:	BRA STOPB
+sdfail: ldaa #'e'
+fault:	bsr outch
+stopb:	bra stopb
 
-OUTCH:
-	BRCLR $2E,X $80 OUTCH
-	STAA $2F,X
-	RTS
+outch:
+	brclr 0x2e,x 0x80 outch
+	staa 0x2f,x
+	rts
 
-CSLOWER:
-	BCLR PDDR,X $20
-	RTS
+cslower:
+	bclr pddr,x 0x20
+	rts
 ;
-;	This lot must preserve A
+;	this lot must preserve a
 ;
-CSRAISE:
-	BSET PDDR,X $20
-SENDFF:
-	LDAB #$FF
-SEND:
-	STAB SPDR,X
-SENDW:
-	BRCLR SPSR,X $80 SENDW
-	LDAB SPDR,X
-	RTS
+csraise:
+	bset pddr,x 0x20
+sendff:
+	ldab #0xff
+send:
+	stab spdr,x
+sendw:
+	brclr spsr,x 0x80 sendw
+	ldab spdr,x
+	rts
 
-SENDCMD:
-	BSR CSRAISE
-	BSR CSLOWER
-WAITFF:
-	BSR SENDFF
-	INCB
-	BNE WAITFF
-NOWAITFF:
-	; Command, 4 bytes data, CRC all preformatted
-	LDAA #6
-SENDLP:
-	LDAB ,Y
-	BSR SEND
-	INY
-	DECA
-	BNE SENDLP
-	BSR SENDFF
-WAITRET:
-	BSR SENDFF
-	BITB #$80
-	BNE WAITRET
-	CMPB #$00
-	RTS
+sendcmd:
+	bsr csraise
+	bsr cslower
+waitff:
+	bsr sendff
+	incb
+	bne waitff
+nowaitff:
+	; command, 4 bytes data, crc all preformatted
+	ldaa #6
+sendlp:
+	ldab ,y
+	bsr send
+	iny
+	deca
+	bne sendlp
+	bsr sendff
+waitret:
+	bsr sendff
+	bitb #0x80
+	bne waitret
+	cmpb #0x00
+	rts

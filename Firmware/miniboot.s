@@ -1,330 +1,328 @@
 ;
-;	Mini 11 Bootstrap
+;	mini 11 bootstrap
 ;
-SPCR	EQU	$28
-SPSR	EQU	$29
-SPDR	EQU	$2A
-PDDR	EQU	$08
-DDRD	EQU	$09
-TMSK2	EQU	$24
-PACTL	EQU	$26
+.set spcr,	0x28
+.set spsr,	0x29
+.set spdr,	0x2a
+.set pddr,	0x08
+.set ddrd,	0x09
+.set tmsk2,	0x24
+.set pactl,	0x26
 
-BAUD	EQU	$2B
-SCCR1	EQU	$2C
-SCCR2	EQU	$2D
-SCSR	EQU	$2E
-SCDR	EQU	$2F
+.set baud,	0x2b
+.set sccr1,	0x2c
+.set sccr2,	0x2d
+.set scsr,	0x2e
+.set scdr,	0x2f
 
-PORTA	EQU	$00
+.set ctmmc,	1
+.set ctsd2,	2
+.set ctsdblk,	3
+.set ctsd1,	4
 
-	ORG	$F040
-	;	IRAM
-CARDTYPE:
-	FCB	0
+.set porta,	0x00
 
-CTMMC	EQU	1
-CTSD2	EQU	2
-CTSDBLK	EQU	3
-CTSD1	EQU	4
+	.section .bss ; 0xf040 
+cardtype:
+	.byte	0
 
-BUF:
-	FCB	0,0,0,0,0,0,0,0
+buf:
+	.byte	0,0,0,0,0,0,0,0
 
-	ORG $F800
-
-START:
-	;	Put the internal RAM at F040-F0FF
-	;	and I/O at F000-F03F. This costs s 64bits of IRAM
+	.section .text ; 0xf800 
+reset_vector:
+	;	put the internal ram at f040-f0ff
+	;	and i/o at f000-f03f. this costs s 64bits of iram
 	;	but gives us a nicer addressing map.
-	LDAA	#$FF
-	STAA  	$103D
-	LDX	#$F000
-	;	Free running timer on divide by 16
-	LDAA	$24,X
-	ORAA    #3
-	STAA	$24,X
-	;	Set up the memory
-	;	Ensure we are in ram bank 0, ROMEN, CS1 high
+	ldaa	#0xff
+	staa  	0x103d
+	ldx	#0xf000
+	;	free running timer on divide by 16
+	ldaa	0x24,x
+	oraa    #3
+	staa	0x24,x
+	;	set up the memory
+	;	ensure we are in ram bank 0, romen, cs1 high
 	;	regardless of any surprises at reset
-	LDAA	#$80
-	STAA	PORTA,X
-	BSET	PACTL,X $80
-	LDAA	#$13
-	STAA	$39,X	;COP slow, DLY still on
-	SEI
-	LDAA	#$30
-	STAA	BAUD,X	; BAUD
-	LDAA	#$00
-	STAA	SCCR1,X	; SCCR1
-	LDAA	#$0C
-	STAA	SCCR2,X	; SCCR2
-	;	Serial is now 9600 8N1 for the 8MHz crystal
-	LDS	#$F0FF
+	ldaa	#0x80
+	staa	porta,x
+	bset	pactl,x 0x80
+	ldaa	#0x13
+	staa	0x39,x	;cop slow, dly still on
+	sei
+	ldaa	#0x30
+	staa	baud,x	; baud
+	ldaa	#0x00
+	staa	sccr1,x	; sccr1
+	ldaa	#0x0c
+	staa	sccr2,x	; sccr2
+	;	serial is now 9600 8n1 for the 8mhz crystal
+	lds	#0xf0ff
 
 
-	LDY	#INIT
-	JSR	STROUT
+	ldy	#init
+	jsr	strout
 
-	LDAA	$3F,X	; CONFIG
-	JSR	PHEX	; Display it
+	ldaa	0x3f,x	; config
+	jsr	phex	; display it
 
-	LDY	#INIT2
-	JSR	STROUT
+	ldy	#init2
+	jsr	strout
 	;
-	;	Probe for an SD card and set it up as tightly as we can
-	;
-
-	LDAA #$38	; SPI outputs on
-	STAA DDRD,X
-	LDAA #$52	; SPI on, master, mode 0, slow (125Khz)
-	STAA SPCR,X
-
-	;	Raise CS send clocks
-	JSR  CSRAISE
-	LDAA #200	; Time for SD to stabilize
-CSLOOP:
-	JSR  SENDFF
-	DECA
-	BNE CSLOOP
-	LDY #CMD0
-	BSR  SENDCMD
-	DECB	; 1 ?
-	BNE SDFAILB
-	LDY #CMD8
-	JSR SENDCMD
-	DECB
-	BEQ NEWCARD
-	JMP OLDCARD
-NEWCARD:
-	BSR GET4
-	LDD BUF+2
-	CMPD #$01AA
-	BNE SDFAILD
-WAIT41:
-	LDY #ACMD41
-	JSR SENDACMD
-	BNE WAIT41
-	LDY #CMD58
-	JSR SENDCMD
-	BNE SDFAILB
-	BSR GET4
-	LDAA BUF
-	ANDA #$40
-	BNE BLOCKSD2
-	LDAA #CTSD2
-INITOK:
-	STAA CARDTYPE
-	JMP LOADER
-
-GET4:
-	LDAA #4
-	LDY #BUF
-GET4L:
-	JSR SENDFF
-	STAB ,Y
-	INY
-	DECA
-	BNE GET4L
-	RTS
-
-SDFAILD:
-	JSR PHEX
-SDFAILB:
-	TBA
-SDFAILA:
-	JSR PHEX
-	LDY #ERROR
-	JMP FAULT
-
-SENDACMD:
-	PSHY
-	LDY #CMD55
-	JSR SENDCMD
-	PULY
-SENDCMD:
-	JSR CSRAISE
-	BSR CSLOWER
-	CMPY #CMD0
-	BEQ NOWAITFF
-WAITFF:
-	JSR SENDFF
-	INCB
-	BNE WAITFF
-NOWAITFF:
-	; Command, 4 bytes data, CRC all preformatted
-	LDAA #6
-SENDLP:
-	LDAB ,Y
-	JSR SEND
-	INY
-	DECA
-	BNE SENDLP
-	JSR SENDFF
-WAITRET:
-	JSR SENDFF
-	BITB #$80
-	BNE WAITRET
-	CMPB #$00
-	RTS
-
-SDFAIL2:
-	BRA SDFAILB
-
-CSLOWER:
-	BCLR PDDR,X $20
-	RTS
-BLOCKSD2:
-	LDAA #CTSDBLK
-	JMP INITOK
-OLDCARD:
-	LDY #ACMD41_0	; FIXME _0 check ?
-	JSR SENDACMD
-	CMPB #2
-	BHS MMC
-WAIT41_0:
-	LDY #ACMD41_0
-	JSR SENDACMD
-	BNE WAIT41_0
-	LDAA #CTSD1
-	STAA CARDTYPE
-	BRA SECSIZE
-MMC:
-	LDY #CMD1
-	JSR SENDCMD
-	BNE MMC
-	LDAA #CTMMC
-	STAA CARDTYPE
-SECSIZE:
-	LDY #CMD16
-	JSR SENDCMD
-	BNE SDFAIL2
-LOADER:
-	BSR CSRAISE
-	LDY #CMD17
-	JSR SENDCMD
-	BNE SDFAIL2
-WAITDATA:
-	JSR SENDFF
-	CMPB #$FE
-	BNE WAITDATA
-	LDY #$0
-	CLRA
-DATALOOP:
-	JSR SENDFF
-	STAB ,Y
-	JSR SENDFF
-	STAB 1,Y
-	INY
-	INY
-	DECA
-	BNE DATALOOP
-	BSR CSRAISE
-	LDY #$0
-	LDD ,Y
-	CPD #$6811
-	BNE NOBOOT
-	LDAA CARDTYPE
-	JMP 2,Y
-
-;
-;	This lot must preserve A
-;
-CSRAISE:
-	BSET PDDR,X $20
-SENDFF:
-	LDAB #$FF
-SEND:
-;	PSHA
-;	TBA
-;	JSR PHEX
-;	LDA #':'
-;	JSR CHOUT
-;	PULA
-	STAB SPDR,X
-SENDW:	BRCLR SPSR,X $80 SENDW
-	LDAB SPDR,X
-;	PSHA
-;	TBA
-;	JSR PHEX
-;	LDAA #10
-;	JSR CHOUT
-;	LDAA #13
-;	JSR CHOUT
-;	PULA
-	RTS
-
-;
-;	Commands
-;
-CMD0:
-	FCB $40,0,0,0,0,$95
-CMD1:
-	FCB $41,0,0,0,0,$01
-CMD8:
-	FCB $48,0,0,$01,$AA,$87
-CMD16:
-	FCB $50,0,0,2,0,$01
-CMD17:
-	FCB $51,0,0,0,0,$01
-CMD55:	
-	FCB $77,0,0,0,0,$01
-CMD58:
-	FCB $7A,0,0,0,0,$01
-ACMD41_0:
-	FCB $69,0,0,0,0,$01
-ACMD41:
-	FCB $69,$40,0,0,0,$01
-
-NOBOOT: LDY	#NOBOOT
-	FCC	'Not bootable'
-	FCB	13,10,0
-FAULT:	JSR	STROUT
-STOPB:	BRA	STOPB
-
-INIT:
-	FCC	'Mini11 68HC11 System, (C) 2019-2023 Alan Cox'
-	FCB	13,10
-	FCC	'Firmware revision: 0.1.1'
-	FCB	13,10,13,10
-	FCC	'MC68HC11 config register '
-	FCB	0
-
-INIT2:
-	FCB	13,10
-	FCC	'Booting from SD card...'
-	FCB	13,10,0
-
-ERROR:
-	FCC	'SD Error'
-	FCB	13,10,0
-
-	;
-	;	Serial I/O	
+	;	probe for an sd card and set it up as tightly as we can
 	;
 
-PHEX:	PSHA
-	LSRA
-	LSRA
-	LSRA
-	LSRA
-	BSR	HEXDIGIT
-	PULA
-	ANDA #$0F
-HEXDIGIT:
-	CMPA #10
-	BMI LO
-	ADDA #7
-LO:	ADDA #'0'
-CHOUT:	BRCLR	SCSR,X $80 CHOUT
-	STAA	SCDR,X
-CHOUTE:	BRCLR	SCSR,X $80 CHOUTE	; helps debug as it's now sync
-STRDONE: RTS
-STROUT:	LDAA	,Y
-	BEQ	STRDONE
-	BSR	CHOUT
-	INY
-	BRA	STROUT
+	ldaa #0x38	; spi outputs on
+	staa ddrd,x
+	ldaa #0x52	; spi on, master, mode 0, slow (125khz)
+	staa spcr,x
 
-	ORG	$FFFE
+	;	raise cs send clocks
+	jsr  csraise
+	ldaa #200	; time for sd to stabilize
+csloop:
+	jsr  sendff
+	deca
+	bne csloop
+	ldy #cmd0
+	bsr  sendcmd
+	decb	; 1 ?
+	bne sdfailb
+	ldy #cmd8
+	jsr sendcmd
+	decb
+	beq newcard
+	jmp oldcard
+newcard:
+	bsr get4
+	ldd buf+2
+	cmpd #0x01aa
+	bne sdfaild
+wait41:
+	ldy #acmd41
+	jsr sendacmd
+	bne wait41
+	ldy #cmd58
+	jsr sendcmd
+	bne sdfailb
+	bsr get4
+	ldaa buf
+	anda #0x40
+	bne blocksd2
+	ldaa #ctsd2
+initok:
+	staa cardtype
+	jmp loader
 
-	FDB	START
+get4:
+	ldaa #4
+	ldy #buf
+get4l:
+	jsr sendff
+	stab ,y
+	iny
+	deca
+	bne get4l
+	rts
+
+sdfaild:
+	jsr phex
+sdfailb:
+	tba
+sdfaila:
+	jsr phex
+	ldy #error
+	jmp fault
+
+sendacmd:
+	pshy
+	ldy #cmd55
+	jsr sendcmd
+	puly
+sendcmd:
+	jsr csraise
+	bsr cslower
+	cmpy #cmd0
+	beq nowaitff
+waitff:
+	jsr sendff
+	incb
+	bne waitff
+nowaitff:
+	; command, 4 bytes data, crc all preformatted
+	ldaa #6
+sendlp:
+	ldab ,y
+	jsr send
+	iny
+	deca
+	bne sendlp
+	jsr sendff
+waitret:
+	jsr sendff
+	bitb #0x80
+	bne waitret
+	cmpb #0x00
+	rts
+
+sdfail2:
+	bra sdfailb
+
+cslower:
+	bclr pddr,x 0x20
+	rts
+blocksd2:
+	ldaa #ctsdblk
+	jmp initok
+oldcard:
+	ldy #acmd41_0	; fixme _0 check ?
+	jsr sendacmd
+	cmpb #2
+	bhs mmc
+wait41_0:
+	ldy #acmd41_0
+	jsr sendacmd
+	bne wait41_0
+	ldaa #ctsd1
+	staa cardtype
+	bra secsize
+mmc:
+	ldy #cmd1
+	jsr sendcmd
+	bne mmc
+	ldaa #ctmmc
+	staa cardtype
+secsize:
+	ldy #cmd16
+	jsr sendcmd
+	bne sdfail2
+loader:
+	bsr csraise
+	ldy #cmd17
+	jsr sendcmd
+	bne sdfail2
+waitdata:
+	jsr sendff
+	cmpb #0xfe
+	bne waitdata
+	ldy #0x0
+	clra
+dataloop:
+	jsr sendff
+	stab ,y
+	jsr sendff
+	stab 1,y
+	iny
+	iny
+	deca
+	bne dataloop
+	bsr csraise
+	ldy #0x0
+	ldd ,y
+	cpd #0x6811
+	bne noboot
+	ldaa cardtype
+	jmp 2,y
+
+;
+;	this lot must preserve a
+;
+csraise:
+	bset pddr,x 0x20
+sendff:
+	ldab #0xff
+send:
+;	psha
+;	tba
+;	jsr phex
+;	lda #':'
+;	jsr chout
+;	pula
+	stab spdr,x
+sendw:	brclr spsr,x 0x80 sendw
+	ldab spdr,x
+;	psha
+;	tba
+;	jsr phex
+;	ldaa #10
+;	jsr chout
+;	ldaa #13
+;	jsr chout
+;	pula
+	rts
+
+;
+;	commands
+;
+cmd0:
+	.byte 0x40,0,0,0,0,0x95
+cmd1:
+	.byte 0x41,0,0,0,0,0x01
+cmd8:
+	.byte 0x48,0,0,0x01,0xaa,0x87
+cmd16:
+	.byte 0x50,0,0,2,0,0x01
+cmd17:
+	.byte 0x51,0,0,0,0,0x01
+cmd55:	
+	.byte 0x77,0,0,0,0,0x01
+cmd58:
+	.byte 0x7a,0,0,0,0,0x01
+acmd41_0:
+	.byte 0x69,0,0,0,0,0x01
+acmd41:
+	.byte 0x69,0x40,0,0,0,0x01
+
+noboot: ldy	#noboot
+	.ascii	"not bootable"
+	.byte	13,10,0
+fault:	jsr	strout
+stopb:	bra	stopb
+
+init:
+	.ascii	"mini11 68hc11 system, (c) 2019-2023 alan cox"
+	.byte	13,10
+	.ascii	"firmware revision: 0.1.1"
+	.byte	13,10,13,10
+	.ascii	"mc68hc11 config register "
+	.byte	0
+
+init2:
+	.byte	13,10
+	.ascii	"booting from sd card..."
+	.byte	13,10,0
+
+error:
+	.ascii	"sd error"
+	.byte	13,10,0
+
+	;
+	;	serial i/o	
+	;
+
+phex:	psha
+	lsra
+	lsra
+	lsra
+	lsra
+	bsr	hexdigit
+	pula
+	anda #0x0f
+hexdigit:
+	cmpa #10
+	bmi lo
+	adda #7
+lo:	adda #'0'
+chout:	brclr	scsr,x 0x80 chout
+	staa	scdr,x
+choute:	brclr	scsr,x 0x80 choute	; helps debug as it's now sync
+strdone: rts
+strout:	ldaa	,y
+	beq	strdone
+	bsr	chout
+	iny
+	bra	strout
+
+.section .vectors ; 0xfffe
+vectors:
+	.word	reset_vector
